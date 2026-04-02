@@ -2,6 +2,8 @@
 
 > AI-powered diabetes and heart disease risk assessment with explainable ML and conversational health insights.
 
+![CI](https://github.com/Axinion/Health-Risk-Explorer/actions/workflows/test.yml/badge.svg)
+
 <!-- INSERT DEMO GIF HERE -->
 
 This application delivers an interactive, clinician-style risk workflow for two classic tabular benchmarks—PIMA-style diabetes and UCI-style heart disease—so analysts, students, and health-tech reviewers can explore **transparent predictions** in one place. It pairs **gradient-boosted probabilities** with **SHAP** attributions, **population context**, and **Groq-powered** narrative and follow-up chat, all behind a **Streamlit** interface with exportable reporting. The stack combines **Python**, **XGBoost**, **SHAP**, **Plotly**, **Groq (Llama 3.1)**, and **ReportLab** into a cohesive demo suitable for portfolios and classroom use.
@@ -72,6 +74,8 @@ Edit `.env` and set:
 GROQ_API_KEY=your_key_here
 ```
 
+On Streamlit Cloud, add `GROQ_API_KEY` in the **Secrets** section of your app dashboard — never commit the real `secrets.toml`.
+
 ### 5. Train both models
 
 Training downloads or uses bundled CSVs, fits XGBoost, and writes model bundles plus metrics under `data/` and `model/`.
@@ -95,6 +99,37 @@ streamlit run app.py
 
 Open the URL shown in the terminal (typically `http://localhost:8501`).
 
+**Deploy:** See **[DEPLOYMENT.md](DEPLOYMENT.md)** for Streamlit Community Cloud, Docker (Fly/Railway/Render, etc.), and required secrets.
+
+## 🐳 Docker Deployment
+
+```bash
+# Build the image
+docker build -t health-risk-explorer .
+
+# Run with your API key
+docker run -p 8501:8501 -e GROQ_API_KEY=your_key_here health-risk-explorer
+
+# Or using docker-compose (recommended)
+echo "GROQ_API_KEY=your_key_here" > .env
+docker-compose up --build
+
+# Access at http://localhost:8501
+```
+
+### Deploy to Render (Free)
+1. Push this repo to GitHub
+2. Go to render.com → New → Web Service
+3. Connect your GitHub repo
+4. Render auto-detects the Dockerfile
+5. Add environment variable: GROQ_API_KEY = your key
+6. Click Deploy
+7. Your app is live at https://your-app-name.onrender.com
+
+Note: Free tier spins down after inactivity.
+First load after inactivity takes ~60 seconds (model retraining).
+Upgrade to paid tier ($7/mo) for always-on.
+
 ## 📁 Project Structure
 
 ```
@@ -102,6 +137,9 @@ Open the URL shown in the terminal (typically `http://localhost:8501`).
 ├── app.py                      # Streamlit UI: risk analysis tab, model performance tab, chat, PDF download
 ├── requirements.txt            # Pinned Python dependencies
 ├── README.md                   # Project documentation (this file)
+├── DEPLOYMENT.md               # Streamlit Cloud, Docker, and env vars for hosting
+├── Dockerfile                  # Container image (trains models at build, runs Streamlit)
+├── .dockerignore               # Keeps images small; excludes .env and venv
 ├── .env.example                # Example environment variables for Groq
 ├── .gitignore                  # Ignores venv, secrets, and generated model artifacts
 ├── .streamlit/

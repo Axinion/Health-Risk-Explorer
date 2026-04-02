@@ -5,14 +5,10 @@ LLM-generated patient-facing explanations via Groq.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
+import os
 
 import numpy as np
-from dotenv import load_dotenv
 from groq import Groq
-
-_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(_ROOT / ".env")
 
 GROQ_MODEL = "llama-3.1-8b-instant"
 
@@ -22,11 +18,25 @@ RISK_SCORE_PCT_KEY = "risk_score_pct"
 _FALLBACK_MSG = "Explanation unavailable. Please check your API connection and try again."
 
 
-def _client() -> Groq:
-    import os
+def _get_groq_api_key() -> str | None:
+    try:
+        import streamlit as st
 
-    key = os.getenv("GROQ_API_KEY")
-    if not key or key.strip() == "your_key_here":
+        api_key = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        api_key = os.getenv("GROQ_API_KEY")
+
+    if api_key and str(api_key).strip() not in ("", "your_key_here"):
+        return str(api_key).strip()
+    return None
+
+
+def _client() -> Groq:
+    key = _get_groq_api_key()
+    if not key:
         raise ValueError("GROQ_API_KEY is missing or still set to the placeholder.")
     return Groq(api_key=key)
 

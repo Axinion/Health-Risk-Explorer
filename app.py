@@ -713,65 +713,48 @@ def _render_landing_screen() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown("### How It Works")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(
-            """
-<div style='background:#1e2a3a; border-radius:12px; padding:24px;
-text-align:center; border:1px solid #2e4a6a;'>
-  <div style='font-size:2rem;'>📋</div>
-  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>① Enter Data</div>
-  <div style='margin-top:0.45rem; color:#cbd5e1;'>Input your health metrics using sliders or upload a CSV file</div>
+    st.markdown(
+        """
+<div class="landing-section-title">How It Works</div>
+<div class="landing-how-grid">
+  <div class="landing-card">
+    <div class="landing-card-icon">📋</div>
+    <div class="landing-card-title">① Enter Data</div>
+    <div class="landing-card-desc">Input your health metrics using sliders or upload a CSV file.</div>
+  </div>
+  <div class="landing-card">
+    <div class="landing-card-icon">🔬</div>
+    <div class="landing-card-title">② Analyze Risk</div>
+    <div class="landing-card-desc">Our XGBoost model calculates your risk score with SHAP explainability.</div>
+  </div>
+  <div class="landing-card">
+    <div class="landing-card-icon">💡</div>
+    <div class="landing-card-title">③ Understand &amp; Act</div>
+    <div class="landing-card-desc">Get an AI-written plain-English explanation and download your report.</div>
+  </div>
 </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            """
-<div style='background:#1e2a3a; border-radius:12px; padding:24px;
-text-align:center; border:1px solid #2e4a6a;'>
-  <div style='font-size:2rem;'>🔬</div>
-  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>② Analyze Risk</div>
-  <div style='margin-top:0.45rem; color:#cbd5e1;'>Our XGBoost model calculates your risk score with SHAP explainability</div>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            """
-<div style='background:#1e2a3a; border-radius:12px; padding:24px;
-text-align:center; border:1px solid #2e4a6a;'>
-  <div style='font-size:2rem;'>💡</div>
-  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>③ Understand & Act</div>
-  <div style='margin-top:0.45rem; color:#cbd5e1;'>Get an AI-written plain-English explanation and download your report</div>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         """
 <style>
-div.stButton > button {
+/* Landing only shows these CTAs in main — full width inside centered columns */
+section.main .block-container .stButton > button {
   width: 100%;
-  height: 60px;
-  font-size: 1.1em;
-  font-weight: bold;
+  min-height: 3.25rem;
+  font-size: 1.05rem;
+  font-weight: 600;
   border-radius: 10px;
 }
 </style>
         """,
         unsafe_allow_html=True,
     )
+
+    # Center the button pair; reserve side gutters explicitly; stack on mobile
     if st.session_state.get("is_mobile"):
-        b1 = st.container()
-        b2 = st.container()
-    else:
-        b1, b2 = st.columns(2)
-    with b1:
         if st.button("🎯 Try with Sample Data", key="landing_try_sample"):
             sample_row: dict[str, float] = {}
             if _SAMPLE_CSV_PATH.exists():
@@ -786,17 +769,61 @@ div.stButton > button {
             st.session_state["input_mode_ui"] = "Try a Sample"
             st.session_state["app_stage"] = "input"
             st.rerun()
-    with b2:
         if st.button("📂 Upload My Own CSV", key="landing_upload_csv"):
             st.session_state["input_mode"] = "upload"
             st.session_state["input_mode_ui"] = "Upload Your Data"
             st.session_state["app_stage"] = "input"
             st.rerun()
-
-    st.caption(
-        "⚠️ This tool is for educational purposes only.\n"
-        "Not a substitute for professional medical advice."
-    )
+        st.markdown(
+            '<p class="landing-disclaimer">'
+            "⚠️ This tool is for educational purposes only. "
+            "Not a substitute for professional medical advice."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+    else:
+        # Symmetric gutters; touch each column so Streamlit lays out full row width
+        left_pad, cta_mid, right_pad = st.columns([2, 3, 2])
+        with left_pad:
+            st.empty()
+        with cta_mid:
+            b1, b2 = st.columns(2, gap="medium")
+            with b1:
+                if st.button("🎯 Try with Sample Data", key="landing_try_sample"):
+                    sample_row: dict[str, float] = {}
+                    if _SAMPLE_CSV_PATH.exists():
+                        try:
+                            sdf = pd.read_csv(_SAMPLE_CSV_PATH)
+                            if len(sdf) > 0:
+                                sample_row = sdf.iloc[0].to_dict()
+                        except Exception:  # pragma: no cover
+                            sample_row = {}
+                    st.session_state["landing_sample_row"] = sample_row
+                    st.session_state["input_mode"] = "sample"
+                    st.session_state["input_mode_ui"] = "Try a Sample"
+                    st.session_state["app_stage"] = "input"
+                    st.rerun()
+            with b2:
+                if st.button("📂 Upload My Own CSV", key="landing_upload_csv"):
+                    st.session_state["input_mode"] = "upload"
+                    st.session_state["input_mode_ui"] = "Upload Your Data"
+                    st.session_state["app_stage"] = "input"
+                    st.rerun()
+        with right_pad:
+            st.empty()
+        d1, dmid, d2 = st.columns([2, 3, 2])
+        with d1:
+            st.empty()
+        with dmid:
+            st.markdown(
+                '<p class="landing-disclaimer">'
+                "⚠️ This tool is for educational purposes only. "
+                "Not a substitute for professional medical advice."
+                "</p>",
+                unsafe_allow_html=True,
+            )
+        with d2:
+            st.empty()
 
 
 BADGE_STYLES = {
@@ -894,6 +921,71 @@ def _inject_product_css() -> None:
     [data-testid="stChatMessageContainer"] {
       padding-bottom: 120px !important;
     }
+    .landing-how-grid {
+      grid-template-columns: 1fr !important;
+      max-width: 100%;
+    }
+    .landing-card {
+      min-height: 0 !important;
+    }
+  }
+
+  /* Landing: equal-height steps + centered layout */
+  .landing-how-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    max-width: 1020px;
+    margin: 0 auto 1.75rem auto;
+    align-items: stretch;
+  }
+  .landing-card {
+    background: #1e2a3a;
+    border-radius: 12px;
+    padding: 1.35rem 1.15rem;
+    text-align: center;
+    border: 1px solid #2e4a6a;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 11.5rem;
+  }
+  .landing-card-icon {
+    font-size: 2rem;
+    line-height: 1;
+  }
+  .landing-card-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 0.45rem;
+    color: #f8fafc;
+    font-family: "Outfit", "DM Sans", sans-serif;
+  }
+  .landing-card-desc {
+    margin-top: 0.5rem;
+    color: #cbd5e1;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    flex: 1 1 auto;
+  }
+  .landing-section-title {
+    text-align: center;
+    font-family: "Outfit", "DM Sans", sans-serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 1.35rem 0 1.1rem 0;
+    color: #f1f5f9;
+    letter-spacing: -0.02em;
+  }
+  .landing-disclaimer {
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.85rem;
+    max-width: 520px;
+    margin: 1.5rem auto 0 auto;
+    line-height: 1.45;
   }
 </style>
         """,

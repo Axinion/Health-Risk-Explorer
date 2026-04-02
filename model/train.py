@@ -30,6 +30,8 @@ FEATURE_NAMES_JSON_PATH = ROOT / "data" / "feature_names.json"
 TRAINING_MEDIANS_JSON_PATH = ROOT / "data" / "training_medians.json"
 VALID_RANGES_JSON_PATH = ROOT / "data" / "valid_ranges.json"
 METRICS_JSON_PATH = ROOT / "data" / "diabetes_metrics.json"
+TEST_PROBS_PATH = ROOT / "data" / "diabetes_test_probs.npy"
+TEST_LABELS_PATH = ROOT / "data" / "diabetes_test_labels.npy"
 
 VALID_RANGES = {
     "Glucose": [0, 300],
@@ -160,6 +162,8 @@ def main() -> None:
 
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
+    np.save(TEST_PROBS_PATH, y_proba.astype(np.float64))
+    np.save(TEST_LABELS_PATH, y_test.to_numpy(dtype=np.int64))
 
     acc = accuracy_score(y_test, y_pred)
     auc = roc_auc_score(y_test, y_proba)
@@ -222,6 +226,8 @@ def main() -> None:
     print(f"Saved feature names to {FEATURE_NAMES_JSON_PATH}")
     print(f"Saved training medians to {TRAINING_MEDIANS_JSON_PATH}")
     print(f"Saved valid ranges to {VALID_RANGES_JSON_PATH}")
+    print(f"Saved test probabilities to {TEST_PROBS_PATH}")
+    print(f"Saved test labels to {TEST_LABELS_PATH}")
 
 
 if __name__ == "__main__":

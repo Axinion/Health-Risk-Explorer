@@ -1,7 +1,8 @@
 [theme]
 base = "dark"
-primaryColor = "#2dd4bf"
-backgroundColor = "#0c0e14"
-secondaryBackgroundColor = "#151922"
-textColor = "#e8eaef"
-font = "sans serif"
+
+[server]
+maxUploadSize = 10
+
+[runner]
+fastReruns = true
