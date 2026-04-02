@@ -1,0 +1,34 @@
+{
+  "Glucose": [
+    0,
+    300
+  ],
+  "BloodPressure": [
+    0,
+    180
+  ],
+  "BMI": [
+    10,
+    70
+  ],
+  "Insulin": [
+    0,
+    900
+  ],
+  "Pregnancies": [
+    0,
+    20
+  ],
+  "SkinThickness": [
+    0,
+    110
+  ],
+  "Age": [
+    18,
+    90
+  ],
+  "DiabetesPedigreeFunction": [
+    0.0,
+    3.0
+  ]
+}

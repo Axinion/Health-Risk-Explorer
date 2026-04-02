@@ -16,6 +16,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Secrets
+.env
+
 # Generated at train time (regenerate with python model/train.py)
 model/diabetes_model.pkl
 data/training_features.npy

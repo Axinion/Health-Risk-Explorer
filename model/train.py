@@ -20,6 +20,19 @@ DATA_PATH = ROOT / "data" / "pima_diabetes.csv"
 MODEL_PATH = ROOT / "model" / "diabetes_model.pkl"
 TRAINING_FEATURES_PATH = ROOT / "data" / "training_features.npy"
 FEATURE_NAMES_JSON_PATH = ROOT / "data" / "feature_names.json"
+TRAINING_MEDIANS_JSON_PATH = ROOT / "data" / "training_medians.json"
+VALID_RANGES_JSON_PATH = ROOT / "data" / "valid_ranges.json"
+
+VALID_RANGES = {
+    "Glucose": [0, 300],
+    "BloodPressure": [0, 180],
+    "BMI": [10, 70],
+    "Insulin": [0, 900],
+    "Pregnancies": [0, 20],
+    "SkinThickness": [0, 110],
+    "Age": [18, 90],
+    "DiabetesPedigreeFunction": [0.0, 3.0],
+}
 
 FEATURE_COLS = [
     "Pregnancies",
@@ -122,6 +135,12 @@ def main() -> None:
     with open(FEATURE_NAMES_JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(FEATURE_COLS, f, indent=2)
 
+    train_feature_medians = {col: float(X_train[col].median()) for col in FEATURE_COLS}
+    with open(TRAINING_MEDIANS_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(train_feature_medians, f, indent=2)
+    with open(VALID_RANGES_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(VALID_RANGES, f, indent=2)
+
     model = XGBClassifier(
         n_estimators=200,
         max_depth=4,
@@ -155,6 +174,8 @@ def main() -> None:
     print(f"\nSaved model bundle to {MODEL_PATH}")
     print(f"Saved training features to {TRAINING_FEATURES_PATH}")
     print(f"Saved feature names to {FEATURE_NAMES_JSON_PATH}")
+    print(f"Saved training medians to {TRAINING_MEDIANS_JSON_PATH}")
+    print(f"Saved valid ranges to {VALID_RANGES_JSON_PATH}")
 
 
 if __name__ == "__main__":

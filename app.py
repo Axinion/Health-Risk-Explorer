@@ -7,12 +7,18 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from model.explain import build_global_feature_importance_chart, build_shap_waterfall_chart
+from model.explain import (
+    build_global_feature_importance_chart,
+    build_shap_waterfall_chart,
+    get_shap_values,
+)
+from model.llm_explain import RISK_SCORE_PCT_KEY, generate_explanation
 from model.predict import predict_diabetes_risk
 from model.train import FEATURE_COLS
 from utils.health_thresholds import get_badge
 from utils.pdf_report import generate_pdf_report
 from utils.population_stats import get_percentiles
+from utils.validation import validate_and_clean_input
 
 SIMULATOR_FEATURES: tuple[str, ...] = ("BMI", "Glucose", "BloodPressure", "Insulin")
 SIMULATOR_LABELS: dict[str, str] = {
@@ -425,7 +431,10 @@ def _render_inputs_sample() -> pd.DataFrame | None:
                     unsafe_allow_html=True,
                 )
             values[key] = cv
-    return pd.DataFrame([values])[FEATURE_COLS]
+    cleaned, val_warns = validate_and_clean_input(values)
+    for w in val_warns:
+        st.warning(w)
+    return pd.DataFrame([cleaned])[FEATURE_COLS]
 
 
 def _render_inputs_upload() -> pd.DataFrame | None:
@@ -459,18 +468,19 @@ def _render_inputs_upload() -> pd.DataFrame | None:
         format_func=lambda i: f"Row {i}",
         key="upload_row_idx",
     )
-    row = df.iloc[[idx]][FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
-    if row.isnull().any().any():
-        bad = row.columns[row.isnull().any()].tolist()
-        st.error(f"Non-numeric values in: `{', '.join(bad)}`. Clean or encode numeric values for these fields.")
-        return None
+    row_coerced = df.iloc[[idx]][FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
+    raw_dict = {c: row_coerced[c].iloc[0] for c in FEATURE_COLS}
+    cleaned, val_warns = validate_and_clean_input(raw_dict)
+    for w in val_warns:
+        st.warning(w)
+    row = pd.DataFrame([cleaned])[FEATURE_COLS]
 
     st.markdown("##### Row values & clinical badges")
     uc1, uc2 = st.columns(2)
     for i, feat in enumerate(FEATURE_COLS):
         spec = SLIDER_CONFIG[feat]
         col = uc1 if i % 2 == 0 else uc2
-        raw = float(row[feat].iloc[0])
+        raw = float(cleaned[feat])
         disp = float(int(round(raw))) if spec["int"] else float(raw)
         lbl = spec["label"]
         with col:
@@ -532,6 +542,12 @@ background: {b["bg"]}; margin-top: 0.5rem;">
         )
 
     input_d = {c: float(row[c].iloc[0]) for c in FEATURE_COLS}
+    _row_sig = tuple(round(float(input_d[c]), 6) for c in FEATURE_COLS)
+    _prev_sig = st.session_state.get("_llm_explanation_row_sig")
+    if _prev_sig is not None and _prev_sig != _row_sig:
+        st.session_state.pop("llm_explanation", None)
+    st.session_state["_llm_explanation_row_sig"] = _row_sig
+
     pct_map: dict[str, int] = {}
     _pop_load_err: str | None = None
     try:
@@ -567,6 +583,51 @@ background: {b["bg"]}; margin-top: 0.5rem;">
     else:
         st.plotly_chart(shap_fig, use_container_width=True, theme=None, key="shap_waterfall")
 
+    def _build_llm_payload() -> dict[str, float]:
+        payload = {c: float(row[c].iloc[0]) for c in FEATURE_COLS}
+        payload[RISK_SCORE_PCT_KEY] = score * 100.0
+        return payload
+
+    def _run_llm_explanation() -> str:
+        shap_vals, _, fnames = get_shap_values(row)
+        return generate_explanation(label_key, shap_vals, list(fnames), _build_llm_payload())
+
+    st.markdown("##### 🤖 AI explanation")
+    b_gen, b_regen = st.columns(2)
+    with b_gen:
+        clicked_gen = st.button("🤖 Generate AI Explanation", key="btn_gen_ai_explanation", use_container_width=True)
+    with b_regen:
+        clicked_regen = st.button(
+            "🔄 Regenerate Explanation", key="btn_regen_ai_explanation", use_container_width=True
+        )
+
+    if clicked_gen:
+        with st.spinner("Generating your personalized explanation..."):
+            try:
+                st.session_state["llm_explanation"] = _run_llm_explanation()
+            except Exception:  # pragma: no cover
+                st.session_state["llm_explanation"] = (
+                    "Explanation unavailable. Please check your API connection and try again."
+                )
+
+    if clicked_regen:
+        st.session_state.pop("llm_explanation", None)
+        with st.spinner("Generating your personalized explanation..."):
+            try:
+                st.session_state["llm_explanation"] = _run_llm_explanation()
+            except Exception:  # pragma: no cover
+                st.session_state["llm_explanation"] = (
+                    "Explanation unavailable. Please check your API connection and try again."
+                )
+
+    _llm_text = st.session_state.get("llm_explanation")
+    if _llm_text:
+        st.info("🤖 **Your Personalized Health Insight**\n\n" + str(_llm_text))
+        st.caption(
+            "⚠️ This explanation is AI-generated and for informational purposes only. "
+            "Always consult a qualified healthcare professional."
+        )
+
     _render_risk_trajectory_simulator(row)
 
     with st.expander("Global model context — mean |SHAP| on 200 training rows", expanded=False):
@@ -577,16 +638,6 @@ background: {b["bg"]}; margin-top: 0.5rem;">
         else:
             st.plotly_chart(gfig, use_container_width=True, theme=None, key="global_shap")
 
-    st.text_area(
-        "AI Explanation",
-        height=140,
-        key="llm_explanation",
-        placeholder=(
-            "Paste or type your AI-generated explanation here to include it in the PDF, "
-            "or leave blank for the default message in the report."
-        ),
-    )
-
     try:
         pdf_buf = generate_pdf_report(
             user_inputs=input_d,
@@ -594,7 +645,7 @@ background: {b["bg"]}; margin-top: 0.5rem;">
             risk_label=label_key,
             shap_fig=shap_fig,
             percentiles=pct_map if pct_map else None,
-            llm_explanation=st.session_state.get("llm_explanation", ""),
+            llm_explanation=str(st.session_state.get("llm_explanation") or ""),
         )
     except Exception as e:  # pragma: no cover
         st.caption(f"Could not prepare PDF: {e}")
