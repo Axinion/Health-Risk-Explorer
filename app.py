@@ -22,6 +22,7 @@ from model.predict import predict_diabetes_risk
 from model.predict_heart import predict_heart_risk
 from model.train import FEATURE_COLS
 from model.train_heart import FEATURE_COLS as HEART_FEATURE_COLS
+from scripts.setup import setup_models
 from utils.health_thresholds import get_badge, get_heart_badge
 from utils.pdf_report import generate_pdf_report
 from utils.population_stats import get_percentiles
@@ -1229,13 +1230,22 @@ def _render_shared_output(row: pd.DataFrame, disease: str) -> None:
         else:
             out = predict_diabetes_risk(row)
     except FileNotFoundError:
-        train_cmd = (
-            "`python model/train_heart.py`"
-            if disease == DISEASE_HEART
-            else "`python model/train.py`"
-        )
-        st.warning(f"Train the model first: {train_cmd} from the project root.")
-        return
+        # Deployment safety net: if model files are missing at runtime, bootstrap once.
+        with st.spinner("🔄 Model files missing. Running setup now, please wait..."):
+            try:
+                setup_models()
+                if disease == DISEASE_HEART:
+                    out = predict_heart_risk(row)
+                else:
+                    out = predict_diabetes_risk(row)
+            except Exception:
+                train_cmd = (
+                    "`python model/train_heart.py`"
+                    if disease == DISEASE_HEART
+                    else "`python model/train.py`"
+                )
+                st.warning(f"Train the model first: {train_cmd} from the project root.")
+                return
     except Exception as e:  # pragma: no cover
         st.error(f"Prediction failed: {e}")
         return
@@ -1439,6 +1449,12 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    diabetes_model = _APP_ROOT / "model" / "diabetes_model.pkl"
+    heart_model = _APP_ROOT / "model" / "heart_model.pkl"
+    if (not diabetes_model.exists()) or (not heart_model.exists()):
+        with st.spinner("🔄 First-time setup: training models, please wait ~60 seconds..."):
+            setup_models()
+
     _inject_product_css()
 
     if "disease_model" not in st.session_state:
