@@ -24,5 +24,10 @@ model/diabetes_model.pkl
 data/training_features.npy
 data/feature_names.json
 
+# Heart model (regenerate with python model/train_heart.py)
+model/heart_model.pkl
+data/heart_training_features.npy
+data/heart_feature_names.json
+
 # Optional: keep pima_diabetes.csv in repo; uncomment to ignore local CSV
 # data/pima_diabetes.csv

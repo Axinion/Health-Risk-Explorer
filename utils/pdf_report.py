@@ -16,8 +16,9 @@ from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.platypus.flowables import HRFlowable
 
-from model.train import FEATURE_COLS
-from utils.health_thresholds import get_badge
+from model.train import FEATURE_COLS as DIABETES_FEATURE_COLS
+from model.train_heart import FEATURE_COLS as HEART_FEATURE_COLS
+from utils.health_thresholds import get_badge, get_heart_badge
 
 _RISK_LABEL_HEX_HTML = {
     "Low": "#2ecc71",
@@ -25,11 +26,19 @@ _RISK_LABEL_HEX_HTML = {
     "High": "#e74c3c",
 }
 
-_RECOMMENDATIONS = [
+_RECOMMENDATIONS_DIABETES = [
     "Maintain fasting glucose below 100 mg/dL through diet and exercise",
     "A BMI between 18.5–24.9 significantly reduces diabetes risk",
     "150 minutes of moderate exercise per week improves insulin sensitivity",
     "Regular HbA1c screening is recommended if glucose is borderline or high",
+    "Consult your physician before making significant lifestyle changes",
+]
+
+_RECOMMENDATIONS_HEART = [
+    "Follow a heart-healthy diet low in sodium and saturated fat",
+    "Aim for regular aerobic activity as advised by your clinician",
+    "Monitor blood pressure and cholesterol with routine care",
+    "Avoid smoking and limit alcohol per medical guidance",
     "Consult your physician before making significant lifestyle changes",
 ]
 
@@ -38,7 +47,11 @@ _PLACEHOLDER_AI = (
 )
 
 
-def _format_metric_value(feature: str, value: float) -> str:
+def _format_metric_value(feature: str, value: float, disease: str = "Diabetes") -> str:
+    if disease == "Heart Disease":
+        if feature == "oldpeak":
+            return f"{float(value):.1f}"
+        return str(int(round(float(value))))
     if feature in ("Pregnancies", "Glucose", "BloodPressure", "SkinThickness", "Insulin", "Age"):
         return str(int(round(float(value))))
     if feature == "BMI":
@@ -46,6 +59,18 @@ def _format_metric_value(feature: str, value: float) -> str:
     if feature == "DiabetesPedigreeFunction":
         return f"{float(value):.3f}"
     return str(value)
+
+
+def _feature_columns(disease: str) -> list[str]:
+    return HEART_FEATURE_COLS if disease == "Heart Disease" else DIABETES_FEATURE_COLS
+
+
+def _clinical_label(feature: str, value: float, disease: str) -> str:
+    if disease == "Heart Disease":
+        _, clinical, _ = get_heart_badge(feature, value)
+    else:
+        _, clinical, _ = get_badge(feature, value)
+    return clinical
 
 
 def _shap_to_image_flowable(shap_fig: Any, max_width: float = 6.5 * inch) -> Any | None:
@@ -71,6 +96,7 @@ def generate_pdf_report(
     shap_fig: Any,
     percentiles: dict[str, int] | None,
     llm_explanation: str | None,
+    disease: str = "Diabetes",
 ) -> io.BytesIO:
     """
     Build a one-page PDF and return a BytesIO buffer (caller should not rely on disk).
@@ -163,7 +189,12 @@ def generate_pdf_report(
     )
 
     story: list[Any] = []
-    story.append(Paragraph("Personal Health Risk Report", title_style))
+    report_title = (
+        "Personal Health Risk Report — Heart Disease"
+        if disease == "Heart Disease"
+        else "Personal Health Risk Report — Diabetes"
+    )
+    story.append(Paragraph(report_title, title_style))
 
     today = datetime.now().strftime("%B %d, %Y")
     story.append(
@@ -177,7 +208,8 @@ def generate_pdf_report(
     # Section 1 — Risk Summary
     story.append(Spacer(1, 8))
     hx = _RISK_LABEL_HEX_HTML.get(risk_label, "#333333")
-    risk_title_html = f'<font color="{hx}">{risk_label} Diabetes Risk</font>'
+    cond = "Heart Disease" if disease == "Heart Disease" else "Diabetes"
+    risk_title_html = f'<font color="{hx}">{risk_label} {cond} Risk</font>'
     story.append(Paragraph(risk_title_html, risk_big))
     story.append(
         Paragraph(f"Risk Score: {risk_score * 100:.0f}%", risk_score_style),
@@ -193,10 +225,12 @@ def generate_pdf_report(
     # Section 2 — Health metrics table
     story.append(Paragraph("Your Health Metrics", h2_style))
     table_data = [["Feature", "Your Value", "Clinical Status"]]
-    for feat in FEATURE_COLS:
+    for feat in _feature_columns(disease):
         val = float(user_inputs[feat])
-        _, clinical, _ = get_badge(feat, val)
-        table_data.append([feat, _format_metric_value(feat, val), clinical])
+        clinical = _clinical_label(feat, val, disease)
+        table_data.append(
+            [feat, _format_metric_value(feat, val, disease), clinical]
+        )
 
     t = Table(table_data, colWidths=[2.2 * inch, 1.4 * inch, 1.5 * inch])
     t.setStyle(
@@ -247,7 +281,8 @@ def generate_pdf_report(
 
     # Section 5 — Recommendations
     story.append(Paragraph("General Recommendations", h2_style))
-    bullets = "<br/>".join(f"• {item}" for item in _RECOMMENDATIONS)
+    recs = _RECOMMENDATIONS_HEART if disease == "Heart Disease" else _RECOMMENDATIONS_DIABETES
+    bullets = "<br/>".join(f"• {item}" for item in recs)
     story.append(Paragraph(bullets, body))
 
     # Footer

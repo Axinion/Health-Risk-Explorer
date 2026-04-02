@@ -1,5 +1,5 @@
 """
-SHAP explainability for the diabetes XGBoost model.
+SHAP explainability for diabetes and heart disease XGBoost models.
 """
 from __future__ import annotations
 
@@ -9,57 +9,77 @@ import pandas as pd
 import plotly.graph_objects as go
 import shap
 
-from model.predict import MODEL_PATH, _clean_single_row
-from model.train import DATA_PATH, FEATURE_COLS, clean_zeros
+from model.predict import MODEL_PATH as DIABETES_MODEL_PATH, _clean_single_row
+from model.predict_heart import MODEL_PATH as HEART_MODEL_PATH, _impute_row
+from model.train import DATA_PATH as DIABETES_DATA_PATH, FEATURE_COLS as DIABETES_FEATURE_COLS, clean_zeros
+from model.train_heart import (
+    DATA_PATH as HEART_DATA_PATH,
+    FEATURE_COLS as HEART_FEATURE_COLS,
+    load_and_clean,
+)
 
 _COLOR_INCREASE = "#dc2626"
 _COLOR_DECREASE = "#16a34a"
 
+DISEASE_DIABETES = "Diabetes"
+DISEASE_HEART = "Heart Disease"
 
-def _load_bundle() -> dict:
-    return joblib.load(MODEL_PATH)
+
+def _normalize_disease(disease: str) -> str:
+    return DISEASE_HEART if disease == DISEASE_HEART else DISEASE_DIABETES
 
 
-def _training_frame_for_background(n: int, random_state: int) -> pd.DataFrame:
-    df = pd.read_csv(DATA_PATH)
-    df, _ = clean_zeros(df)
-    X = df[FEATURE_COLS]
-    y = df["Outcome"]
+def _load_bundle(disease: str) -> dict:
+    d = _normalize_disease(disease)
+    path = HEART_MODEL_PATH if d == DISEASE_HEART else DIABETES_MODEL_PATH
+    return joblib.load(path)
+
+
+def _training_frame_for_background(
+    disease: str, n: int, random_state: int
+) -> pd.DataFrame:
+    d = _normalize_disease(disease)
     from sklearn.model_selection import train_test_split
 
+    if d == DISEASE_HEART:
+        df = load_and_clean(HEART_DATA_PATH)
+        X = df[HEART_FEATURE_COLS]
+        y = df["target"]
+        X_train, _, _, _ = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        return X_train.sample(n=min(n, len(X_train)), random_state=random_state)
+
+    df = pd.read_csv(DIABETES_DATA_PATH)
+    df, _ = clean_zeros(df)
+    X = df[DIABETES_FEATURE_COLS]
+    y = df["Outcome"]
     X_train, _, _, _ = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
     return X_train.sample(n=min(n, len(X_train)), random_state=random_state)
 
 
-_explainer_instance: shap.TreeExplainer | None = None
+_explainers: dict[str, shap.TreeExplainer] = {}
 
 
-def _get_explainer() -> shap.TreeExplainer:
-    """
-    TreeExplainer in probability space for the positive (diabetes) class.
-
-    Uses interventional perturbation with a training background sample so
-    ``model_output='probability'`` is supported (tree_path_dependent only allows raw).
-    """
-    global _explainer_instance
-    if _explainer_instance is None:
-        model = _load_bundle()["model"]
-        bg = _training_frame_for_background(200, random_state=42)
-        _explainer_instance = shap.TreeExplainer(
+def _get_explainer(disease: str) -> shap.TreeExplainer:
+    d = _normalize_disease(disease)
+    if d not in _explainers:
+        model = _load_bundle(d)["model"]
+        bg = _training_frame_for_background(d, 200, random_state=42)
+        _explainers[d] = shap.TreeExplainer(
             model,
             data=bg,
             feature_perturbation="interventional",
             model_output="probability",
         )
-    return _explainer_instance
+    return _explainers[d]
 
 
 def _shap_values_for_positive_class(
     explainer: shap.TreeExplainer, X: pd.DataFrame
 ) -> tuple[np.ndarray, float]:
-    """Return SHAP matrix (n_samples, n_features) and base value for diabetes probability."""
     raw = explainer.shap_values(X)
     ev = explainer.expected_value
 
@@ -76,46 +96,48 @@ def _shap_values_for_positive_class(
     return sv, base
 
 
-def get_shap_values(input_df: pd.DataFrame) -> tuple[np.ndarray, float, list[str]]:
+def _preprocess_for_model(
+    input_df: pd.DataFrame, feature_cols: list[str], disease: str
+) -> pd.DataFrame:
+    d = _normalize_disease(disease)
+    bundle = _load_bundle(d)
+    train_medians = bundle.get("training_medians", {})
+    sub = input_df[feature_cols].copy()
+    if d == DISEASE_HEART:
+        row = _impute_row(sub, train_medians, feature_cols)
+    else:
+        row = _clean_single_row(sub, train_medians)
+    return row[feature_cols]
+
+
+def get_shap_values(
+    input_df: pd.DataFrame, disease: str = DISEASE_DIABETES
+) -> tuple[np.ndarray, float, list[str]]:
     """
     SHAP decomposition for one patient row (positive-class probability).
 
-    Returns
-    -------
-    shap_values :
-        1D array, length 8, aligned with ``feature_names``.
-    base_value :
-        Expected diabetes probability E[f(X)] from the explainer.
-    feature_names :
-        Ordered PIMA feature names matching the model.
+    ``disease`` must be ``DISEASE_DIABETES`` or ``DISEASE_HEART``.
     """
     if len(input_df) != 1:
         raise ValueError("input_df must be exactly one row")
 
-    bundle = _load_bundle()
+    d = _normalize_disease(disease)
+    bundle = _load_bundle(d)
     feature_names = list(bundle["feature_cols"])
-    X = _preprocess_for_model(input_df, feature_names)
+    X = _preprocess_for_model(input_df, feature_names, d)
 
-    explainer = _get_explainer()
+    explainer = _get_explainer(d)
     sv, base = _shap_values_for_positive_class(explainer, X)
     return sv[0].copy(), float(base), feature_names
 
 
-def _preprocess_for_model(input_df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    bundle = _load_bundle()
-    train_medians = bundle.get("training_medians", {})
-    row = _clean_single_row(input_df[feature_cols].copy(), train_medians)
-    return row[feature_cols]
-
-
-def build_shap_chart(input_df: pd.DataFrame) -> go.Figure:
-    """
-    Horizontal bar chart of signed SHAP contributions for one row.
-
-    Red: factors increasing diabetes probability; green: decreasing.
-    Features sorted by absolute impact (largest magnitude at top).
-    """
-    shap_vals, _, names = get_shap_values(input_df)
+def build_shap_chart(
+    input_df: pd.DataFrame, disease: str = DISEASE_DIABETES
+) -> go.Figure:
+    """Horizontal bar chart of signed SHAP contributions for one row."""
+    d = _normalize_disease(disease)
+    label = "heart disease" if d == DISEASE_HEART else "diabetes"
+    shap_vals, _, names = get_shap_values(input_df, d)
     names = list(names)
     order = np.argsort(np.abs(shap_vals))
     names_ord = [names[i] for i in order]
@@ -144,7 +166,7 @@ def build_shap_chart(input_df: pd.DataFrame) -> go.Figure:
             ),
             font=dict(size=15),
         ),
-        xaxis_title="SHAP value (impact on diabetes probability)",
+        xaxis_title=f"SHAP value (impact on {label} probability)",
         yaxis=dict(
             title=None,
             automargin=True,
@@ -160,13 +182,15 @@ def build_shap_chart(input_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def build_shap_waterfall_chart(input_df: pd.DataFrame) -> go.Figure:
-    """
-    SHAP waterfall: baseline expected probability, per-feature contributions, and total predicted risk.
+def build_shap_waterfall_chart(
+    input_df: pd.DataFrame, disease: str = DISEASE_DIABETES
+) -> go.Figure:
+    """SHAP waterfall for baseline → features → predicted positive-class probability."""
+    d = _normalize_disease(disease)
+    cond = "heart disease" if d == DISEASE_HEART else "diabetes"
+    short = "P(heart disease)" if d == DISEASE_HEART else "P(diabetes)"
 
-    Uses the same SHAP values as ``get_shap_values`` (probability output).
-    """
-    shap_vals, base, names = get_shap_values(input_df)
+    shap_vals, base, names = get_shap_values(input_df, d)
     names = list(names)
     pred = float(np.sum(shap_vals) + base)
     order = np.argsort(-np.abs(shap_vals))
@@ -174,7 +198,7 @@ def build_shap_waterfall_chart(input_df: pd.DataFrame) -> go.Figure:
     ordered_shap = shap_vals[order].astype(float)
 
     measure = ["absolute"] + ["relative"] * len(ordered_names) + ["total"]
-    x_labels = ["Baseline<br>E[f(x)]"] + ordered_names + ["Predicted<br>P(diabetes)"]
+    x_labels = ["Baseline<br>E[f(x)]"] + ordered_names + [f"Predicted<br>{short}"]
     y_vals = [base] + list(ordered_shap) + [pred]
 
     connector_line = dict(color="rgba(148, 163, 184, 0.5)")
@@ -185,7 +209,9 @@ def build_shap_waterfall_chart(input_df: pd.DataFrame) -> go.Figure:
             measure=measure,
             x=x_labels,
             y=y_vals,
-            text=[f"{base:.3f}"] + [f"+{v:.3f}" if v >= 0 else f"{v:.3f}" for v in ordered_shap] + [f"{pred:.3f}"],
+            text=[f"{base:.3f}"]
+            + [f"+{v:.3f}" if v >= 0 else f"{v:.3f}" for v in ordered_shap]
+            + [f"{pred:.3f}"],
             textposition="outside",
             connector=dict(line=connector_line),
             increasing=dict(marker=dict(color="#f87171")),
@@ -194,7 +220,10 @@ def build_shap_waterfall_chart(input_df: pd.DataFrame) -> go.Figure:
         )
     )
     fig.update_layout(
-        title=dict(text="<b>SHAP waterfall</b> · how each feature moves risk from baseline", font=dict(size=15)),
+        title=dict(
+            text=f"<b>SHAP waterfall</b> · how each feature moves {cond} risk from baseline",
+            font=dict(size=15),
+        ),
         yaxis=dict(title="Probability contribution", showgrid=True, zeroline=True),
         xaxis=dict(title=None, tickangle=-35),
         showlegend=False,
@@ -207,17 +236,20 @@ def build_shap_waterfall_chart(input_df: pd.DataFrame) -> go.Figure:
 
 
 def build_global_feature_importance_chart(
-    n_samples: int = 200, random_state: int = 42
+    n_samples: int = 200,
+    random_state: int = 42,
+    disease: str = DISEASE_DIABETES,
 ) -> go.Figure:
-    """
-    Mean |SHAP| over ``n_samples`` random training rows (same split as training).
-    """
-    bg = _training_frame_for_background(n_samples, random_state)
-    explainer = _get_explainer()
+    """Mean |SHAP| over ``n_samples`` random training rows (same split as training)."""
+    d = _normalize_disease(disease)
+    label = "heart disease" if d == DISEASE_HEART else "diabetes"
+    bg = _training_frame_for_background(d, n_samples, random_state)
+    explainer = _get_explainer(d)
     sv, _ = _shap_values_for_positive_class(explainer, bg)
     mean_abs = np.mean(np.abs(sv), axis=0)
     order = np.argsort(mean_abs)
-    names = [FEATURE_COLS[i] for i in order]
+    fnames = list(_load_bundle(d)["feature_cols"])
+    names = [fnames[i] for i in order]
     vals = mean_abs[order]
 
     fig = go.Figure(
@@ -238,7 +270,7 @@ def build_global_feature_importance_chart(
             ),
             font=dict(size=15),
         ),
-        xaxis_title="Mean |SHAP| (diabetes probability)",
+        xaxis_title=f"Mean |SHAP| ({label} probability)",
         yaxis=dict(title=None, automargin=True),
         height=max(360, 44 * len(names)),
         margin=dict(l=120, r=24, t=72, b=56),

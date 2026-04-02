@@ -1,36 +1,162 @@
-# Personal Health Risk Explorer
+# 🏥 Personal Health Risk Explorer
 
-**[GitHub](https://github.com/Axinion/Health-Risk-Explorer.git)**
+> AI-powered diabetes and heart disease risk assessment with explainable ML and conversational health insights.
 
-This project is a **Streamlit** web app that estimates **diabetes risk** from eight **PIMA Indians Diabetes**–style features using **XGBoost**, then explains results with **SHAP**, population percentiles, clinical banding, an optional **Groq (Llama 3.1 8B)** narrative, a what-if simulator, and a **ReportLab** PDF report. It is meant for learning and demos—not for clinical use.
+<!-- INSERT DEMO GIF HERE -->
 
-## Setup
+This application delivers an interactive, clinician-style risk workflow for two classic tabular benchmarks—PIMA-style diabetes and UCI-style heart disease—so analysts, students, and health-tech reviewers can explore **transparent predictions** in one place. It pairs **gradient-boosted probabilities** with **SHAP** attributions, **population context**, and **Groq-powered** narrative and follow-up chat, all behind a **Streamlit** interface with exportable reporting. The stack combines **Python**, **XGBoost**, **SHAP**, **Plotly**, **Groq (Llama 3.1)**, and **ReportLab** into a cohesive demo suitable for portfolios and classroom use.
 
-1. **Install dependencies:** `pip install -r requirements.txt`
-2. **Configure Groq:** Add `GROQ_API_KEY` to a `.env` file in the project root (see `.env.example`).
-3. **Train the model and generate data artifacts:** `python model/train.py`
-4. **Run the smoke test:** `python scripts/smoke_test.py`
-5. **Launch the app:** `streamlit run app.py`
+## ✨ Features
 
-Optional: use a virtual environment (`python -m venv .venv` then activate it) before step 1.
+- 🩺 **Diabetes Risk Prediction** (PIMA dataset, XGBoost)
+- 🫀 **Heart Disease Risk Prediction** (UCI dataset, XGBoost)
+- 📊 **SHAP Explainability** — see exactly which factors drive your risk
+- 🎯 **Risk Trajectory Simulator** — "what if" scenario modeling
+- 💬 **Conversational AI Follow-Up** — ask questions about your results
+- 📈 **Model Performance Dashboard** — ROC curve, confusion matrix, AUC
+- 👥 **Population Percentile Comparison**
+- 🏷️ **Clinical Health Badges** per metric
+- 📄 **Downloadable PDF Health Report**
 
-## Features
+## 🛠️ Tech Stack
 
-- Interactive **sliders** or **CSV upload** for all eight PIMA features  
-- **Risk score** (probability × 100) with Low / Moderate / High labels  
-- **Clinical badges** (Normal / Borderline / High) via `utils/health_thresholds.py`  
-- **Input validation** and median imputation for missing CSV values (`utils/validation.py`)  
-- **Population percentiles** vs. training cohort (`utils/population_stats.py`)  
-- **SHAP** waterfall and global importance views (`model/explain.py`)  
-- **Risk trajectory simulator** for BMI, glucose, blood pressure, insulin  
-- **AI explanation** via **Groq** (`model/llm_explain.py`)  
-- **PDF health report** download (`utils/pdf_report.py`)  
-- Dark Streamlit theme (`.streamlit/config.toml`)
+| Layer | Technology | Purpose |
+| --- | --- | --- |
+| ML Model | XGBoost | Binary classifiers (diabetes & heart disease) with calibrated probability outputs |
+| Explainability | SHAP (TreeExplainer) | Per-prediction attributions, waterfall charts, global importance |
+| Frontend | Streamlit | Tabs, sidebar disease selector, sliders, CSV upload, chat UI |
+| Visualization | Plotly | Gauges, SHAP waterfall, ROC curves, confusion-matrix heatmaps |
+| LLM | Groq API — Llama 3.1 8B Instant | Initial explanations and multi-turn follow-up grounded in patient context |
+| PDF | ReportLab (+ Kaleido for figures) | One-page downloadable health summary with metrics and SHAP snapshot |
+| Data | Pandas, NumPy, SciPy | Loading, cleaning, training matrices, percentile statistics |
 
-## Tech stack
+## 🚀 Getting Started
 
-Python, **XGBoost**, **SHAP**, **Streamlit**, **Plotly**, **Groq (Llama 3.1 8B Instant)**, **ReportLab**, **Pandas**, NumPy, scikit-learn, SciPy, Joblib, Kaleido (Plotly PNG export), Requests (dataset fetch).
+### Prerequisites
 
-## Disclaimer
+- **Python** 3.10 or newer (3.11+ recommended)
+- **pip** and a virtual environment (recommended)
+- A **Groq API key** for AI explanations and chat ([Groq Console](https://console.groq.com/))
 
-**For educational purposes only. Not medical advice.** Do not use for diagnosis or treatment. Consult a qualified healthcare professional for any health decisions.
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Axinion/Health-Risk-Explorer.git
+cd Health-Risk-Explorer
+```
+
+### 2. Create a virtual environment (recommended)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configure Groq
+
+Copy the example env file and add your key:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set:
+
+```env
+GROQ_API_KEY=your_key_here
+```
+
+### 5. Train both models
+
+Training downloads or uses bundled CSVs, fits XGBoost, and writes model bundles plus metrics under `data/` and `model/`.
+
+```bash
+python model/train.py
+python model/train_heart.py
+```
+
+### 6. Run the smoke test (optional)
+
+```bash
+python scripts/smoke_test.py
+```
+
+### 7. Launch the app
+
+```bash
+streamlit run app.py
+```
+
+Open the URL shown in the terminal (typically `http://localhost:8501`).
+
+## 📁 Project Structure
+
+```
+.
+├── app.py                      # Streamlit UI: risk analysis tab, model performance tab, chat, PDF download
+├── requirements.txt            # Pinned Python dependencies
+├── README.md                   # Project documentation (this file)
+├── .env.example                # Example environment variables for Groq
+├── .gitignore                  # Ignores venv, secrets, and generated model artifacts
+├── .streamlit/
+│   └── config.toml             # Streamlit theme and UI defaults
+├── data/
+│   ├── pima_diabetes.csv       # PIMA Indians Diabetes data (downloaded if missing)
+│   ├── heart.csv               # Heart disease CSV (downloaded if missing)
+│   ├── training_features.npy   # Diabetes training matrix (generated by train.py)
+│   ├── heart_training_features.npy  # Heart training matrix (generated by train_heart.py)
+│   ├── feature_names.json      # Diabetes feature order for population stats
+│   ├── heart_feature_names.json     # Heart feature order
+│   ├── training_medians.json   # Imputation / validation medians (diabetes)
+│   ├── heart_medians.json      # Imputation medians (heart)
+│   ├── valid_ranges.json       # Allowed value ranges for diabetes inputs
+│   ├── heart_valid_ranges.json # Allowed ranges for heart inputs
+│   ├── diabetes_metrics.json   # Test metrics & ROC arrays (diabetes, from train.py)
+│   └── heart_metrics.json      # Test metrics & ROC arrays (heart, from train_heart.py)
+├── model/
+│   ├── __init__.py             # Package marker
+│   ├── train.py                # PIMA data prep, XGBoost training, diabetes_metrics.json
+│   ├── train_heart.py          # Heart data prep, XGBoost training, heart_metrics.json
+│   ├── predict.py              # Load diabetes bundle, score one row, risk bands
+│   ├── predict_heart.py        # Load heart bundle, score one row, risk bands
+│   ├── explain.py              # SHAP charts and global importance (both diseases)
+│   ├── llm_explain.py          # Groq prompts: initial explanation + follow-up chat
+│   ├── diabetes_model.pkl      # Serialized diabetes model + metadata (gitignored by default)
+│   └── heart_model.pkl         # Serialized heart model + metadata (gitignored by default)
+├── scripts/
+│   └── smoke_test.py           # End-to-end check: predict, SHAP, LLM, after training
+└── utils/
+    ├── __init__.py             # Package marker
+    ├── health_thresholds.py    # Clinical-style badges for diabetes & heart features
+    ├── population_stats.py     # Percentile ranks vs training cohort
+    ├── validation.py           # Median imputation and range warnings for inputs
+    └── pdf_report.py           # ReportLab PDF with risk summary and SHAP figure
+```
+
+## 🧠 How It Works
+
+**Data preprocessing.** The PIMA pipeline treats implausible zeros in select labs as missing and imputes cohort medians before training; the heart pipeline drops rows with missing `ca` / `thal` and coerces numeric columns. Both use stratified train/test splits and persist medians, valid ranges, and training feature matrices so the app can validate uploads and compare users to the same reference population.
+
+**XGBoost training.** Two separate `XGBClassifier` models share hyperparameters (`n_estimators=200`, `max_depth=4`, `learning_rate=0.05`). Each exports a joblib bundle (model + feature columns + medians), alongside JSON metrics including ROC FPR/TPR arrays and confusion matrices for the performance dashboard.
+
+**SHAP explainability.** `TreeExplainer` runs in probability space with an interventional background sample from training data so each prediction gets signed contributions for a waterfall chart and a consistent ranking of top drivers—critical for trust and for feeding the LLM “top factors” text.
+
+**Groq LLM integration.** The app builds structured prompts with risk label, probability, metrics, and SHAP-derived highlights. The same client powers the initial paragraph and the follow-up chat, which sends a fixed system preamble plus rolling user/assistant history so answers stay anchored to the patient’s numbers while preserving a clear medical-disclaimer posture.
+
+## 📸 Screenshots
+
+<!-- Risk Analysis Tab -->
+
+<!-- Model Performance Tab -->
+
+<!-- PDF Report -->
+
+## ⚠️ Disclaimer
+
+This application is for **educational and informational purposes only**. It is **not** a medical device, diagnostic tool, or substitute for professional healthcare advice, examination, or treatment. Model outputs—including risk scores, SHAP explanations, AI text, and PDFs—are **demonstrations** trained on public datasets that may not reflect your health, population, or clinical context. **Always consult a qualified healthcare professional** for decisions about your health.

@@ -1,5 +1,5 @@
 """
-Train XGBoost classifier on PIMA Indians Diabetes dataset.
+Train XGBoost classifier on UCI-style Heart Disease data (heart.csv).
 """
 from __future__ import annotations
 
@@ -21,114 +21,104 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 
-# Project root (parent of model/)
 ROOT = Path(__file__).resolve().parent.parent
-DATA_PATH = ROOT / "data" / "pima_diabetes.csv"
-MODEL_PATH = ROOT / "model" / "diabetes_model.pkl"
-TRAINING_FEATURES_PATH = ROOT / "data" / "training_features.npy"
-FEATURE_NAMES_JSON_PATH = ROOT / "data" / "feature_names.json"
-TRAINING_MEDIANS_JSON_PATH = ROOT / "data" / "training_medians.json"
-VALID_RANGES_JSON_PATH = ROOT / "data" / "valid_ranges.json"
-METRICS_JSON_PATH = ROOT / "data" / "diabetes_metrics.json"
+DATA_PATH = ROOT / "data" / "heart.csv"
+MODEL_PATH = ROOT / "model" / "heart_model.pkl"
+TRAINING_FEATURES_PATH = ROOT / "data" / "heart_training_features.npy"
+FEATURE_NAMES_JSON_PATH = ROOT / "data" / "heart_feature_names.json"
+TRAINING_MEDIANS_JSON_PATH = ROOT / "data" / "heart_medians.json"
+VALID_RANGES_JSON_PATH = ROOT / "data" / "heart_valid_ranges.json"
+METRICS_JSON_PATH = ROOT / "data" / "heart_metrics.json"
 
-VALID_RANGES = {
-    "Glucose": [0, 300],
-    "BloodPressure": [0, 180],
-    "BMI": [10, 70],
-    "Insulin": [0, 900],
-    "Pregnancies": [0, 20],
-    "SkinThickness": [0, 110],
-    "Age": [18, 90],
-    "DiabetesPedigreeFunction": [0.0, 3.0],
+# Primary URL from spec; mirror if unavailable (same column schema).
+HEART_URL_PRIMARY = (
+    "https://raw.githubusercontent.com/rohankokkula/Heart-disease-prediction/master/heart.csv"
+)
+HEART_URL_FALLBACK = (
+    "https://raw.githubusercontent.com/kb22/Heart-Disease-Prediction/master/dataset.csv"
+)
+
+VALID_RANGES: dict[str, list[int | float]] = {
+    "age": [20, 80],
+    "trestbps": [80, 200],
+    "chol": [100, 600],
+    "thalach": [60, 220],
+    "oldpeak": [0, 7],
+    "sex": [0, 1],
+    "cp": [0, 3],
+    "fbs": [0, 1],
+    "restecg": [0, 2],
+    "exang": [0, 1],
+    "slope": [0, 2],
+    "ca": [0, 4],
+    "thal": [0, 3],
 }
 
 FEATURE_COLS = [
-    "Pregnancies",
-    "Glucose",
-    "BloodPressure",
-    "SkinThickness",
-    "Insulin",
-    "BMI",
-    "DiabetesPedigreeFunction",
-    "Age",
+    "age",
+    "sex",
+    "cp",
+    "trestbps",
+    "chol",
+    "fbs",
+    "restecg",
+    "thalach",
+    "exang",
+    "oldpeak",
+    "slope",
+    "ca",
+    "thal",
 ]
-ZERO_TO_MEDIAN_COLS = [
-    "Glucose",
-    "BloodPressure",
-    "SkinThickness",
-    "Insulin",
-    "BMI",
-]
+
+TARGET_COL = "target"
 
 
 def ensure_dataset(path: Path) -> None:
-    """Download PIMA Indians Diabetes data (UCI schema) into data/pima_diabetes.csv."""
+    """Download heart.csv into data/ (primary URL, then fallback)."""
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     import requests
 
-    # UCI’s old direct URL often 404s; this CSV matches UCI/Kaggle columns.
-    urls = (
-        "https://raw.githubusercontent.com/npradaschnor/Pima-Indians-Diabetes-Dataset/master/diabetes.csv",
-        (
-            "https://archive.ics.uci.edu/ml/machine-learning-databases/"
-            "pima-indians-diabetes/pima-indians-diabetes.data"
-        ),
-    )
     last_err: Exception | None = None
-    for url in urls:
+    for url in (HEART_URL_PRIMARY, HEART_URL_FALLBACK):
         try:
             r = requests.get(url, timeout=90)
             r.raise_for_status()
-            if url.endswith(".csv"):
-                path.write_bytes(r.content)
-                return
-            lines = r.text.strip().splitlines()
-            rows = [line.split(",") for line in lines]
-            df = pd.DataFrame(rows, dtype=float)
-            df.columns = FEATURE_COLS + ["Outcome"]
-            df = df.astype(
-                {
-                    "Pregnancies": int,
-                    "Glucose": float,
-                    "BloodPressure": float,
-                    "SkinThickness": float,
-                    "Insulin": float,
-                    "BMI": float,
-                    "DiabetesPedigreeFunction": float,
-                    "Age": int,
-                    "Outcome": int,
-                }
-            )
-            df.to_csv(path, index=False)
+            path.write_bytes(r.content)
             return
         except Exception as e:
             last_err = e
     raise RuntimeError(
-        f"Could not download PIMA dataset: {last_err!r}. "
-        f"Place a CSV with columns {FEATURE_COLS + ['Outcome']} at {path}."
+        f"Could not download Heart Disease CSV: {last_err!r}. "
+        f"Save a file with columns {FEATURE_COLS + [TARGET_COL]} at {path}."
     ) from last_err
 
 
-def clean_zeros(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, float]]:
-    out = df.copy()
-    medians: dict[str, float] = {}
-    for col in ZERO_TO_MEDIAN_COLS:
-        col_series = out[col].replace(0, np.nan)
-        median = float(col_series.median())
-        medians[col] = median
-        out[col] = col_series.fillna(median)
-    return out, medians
+def load_and_clean(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, na_values=["?", "? "])
+    for c in FEATURE_COLS + [TARGET_COL]:
+        if c not in df.columns:
+            raise ValueError(f"Missing column {c!r} in {path}")
+    df = df.dropna(subset=["ca", "thal"])
+    for c in FEATURE_COLS + [TARGET_COL]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=FEATURE_COLS + [TARGET_COL])
+    # Binary / multiclass target → 0/1
+    y = df[TARGET_COL].astype(int)
+    if y.max() > 1:
+        y = (y > 0).astype(int)
+    df = df.copy()
+    df[TARGET_COL] = y
+    return df
 
 
 def main() -> None:
     ensure_dataset(DATA_PATH)
-    df = pd.read_csv(DATA_PATH)
-    df, training_medians = clean_zeros(df)
+    df = load_and_clean(DATA_PATH)
 
     X = df[FEATURE_COLS]
-    y = df["Outcome"]
+    y = df[TARGET_COL]
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,
@@ -198,9 +188,9 @@ def main() -> None:
         "thresholds": [_threshold_json_float(float(t)) for t in thresholds],
         "train_size": int(len(X_train)),
         "test_size": int(len(X_test)),
-        "n_features": 8,
+        "n_features": 13,
         "model_name": "XGBoost Classifier",
-        "dataset": "PIMA Indians Diabetes Database",
+        "dataset": "UCI Heart Disease Dataset",
     }
     METRICS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(METRICS_JSON_PATH, "w", encoding="utf-8") as f:
@@ -212,8 +202,7 @@ def main() -> None:
         {
             "model": model,
             "feature_cols": FEATURE_COLS,
-            "zero_median_cols": ZERO_TO_MEDIAN_COLS,
-            "training_medians": training_medians,
+            "training_medians": train_feature_medians,
         },
         MODEL_PATH,
     )
