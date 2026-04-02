@@ -2,7 +2,6 @@
 
 > AI-powered diabetes and heart disease risk assessment with explainable ML and conversational health insights.
 
-![CI](https://github.com/Axinion/Health-Risk-Explorer/actions/workflows/test.yml/badge.svg)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-ff4b4b?logo=streamlit&logoColor=white)](https://health-risk-explorer-s.streamlit.app/)
 
 **Live App:** [health-risk-explorer-s.streamlit.app](https://health-risk-explorer-s.streamlit.app/)
