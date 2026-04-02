@@ -1,14 +1,23 @@
 """
 Personal Health Risk Explorer — Streamlit UI (sample sliders or CSV upload).
 """
+# MOBILE TEST CHECKLIST:
+# [ ] Landing screen buttons stack vertically on iPhone
+# [ ] Sliders are wide enough to tap
+# [ ] Gauge charts not clipped
+# [ ] Chat input visible above keyboard
+# [ ] PDF download button accessible
+# [ ] Sidebar collapsed by default
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 
 from model.explain import (
     DISEASE_DIABETES,
@@ -27,6 +36,7 @@ from utils.health_thresholds import get_badge, get_heart_badge
 from utils.pdf_report import generate_pdf_report
 from utils.population_stats import get_percentiles
 from utils.validation import validate_and_clean_input
+from utils.feature_glossary import DIABETES_GLOSSARY, HEART_GLOSSARY
 
 HEART_SIMULATOR_FEATURES: tuple[str, ...] = ("trestbps", "chol", "thalach", "oldpeak")
 HEART_SIM_LABELS: dict[str, str] = {
@@ -90,11 +100,27 @@ _METRICS_JSON_PATHS: dict[str, Path] = {
     DISEASE_DIABETES: _APP_ROOT / "data" / "diabetes_metrics.json",
     DISEASE_HEART: _APP_ROOT / "data" / "heart_metrics.json",
 }
+_TEST_PROBS_PATHS: dict[str, Path] = {
+    DISEASE_DIABETES: _APP_ROOT / "data" / "diabetes_test_probs.npy",
+    DISEASE_HEART: _APP_ROOT / "data" / "heart_test_probs.npy",
+}
+_TEST_LABELS_PATHS: dict[str, Path] = {
+    DISEASE_DIABETES: _APP_ROOT / "data" / "diabetes_test_labels.npy",
+    DISEASE_HEART: _APP_ROOT / "data" / "heart_test_labels.npy",
+}
 
 _DATASET_LINKS: dict[str, str] = {
     DISEASE_DIABETES: "https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database",
     DISEASE_HEART: "https://archive.ics.uci.edu/dataset/45/heart+disease",
 }
+
+_SAMPLE_CSV_PATH = _APP_ROOT / "data" / "sample_patients.csv"
+_PROGRESS_LABELS = (
+    "Enter Data",
+    "View Risk Score",
+    "Get AI Explanation",
+    "Download Report",
+)
 
 
 def _style_plotly(fig: go.Figure) -> go.Figure:
@@ -106,6 +132,70 @@ def _style_plotly(fig: go.Figure) -> go.Figure:
         title_font=dict(color="#f4f4f5"),
     )
     return fig
+
+
+def _render_progress_stepper(progress_step: int) -> None:
+    """Top-of-screen visual progress tracker (steps 1..4)."""
+    step = max(1, min(4, int(progress_step)))
+    if st.session_state.get("is_mobile"):
+        st.markdown(
+            f"<div style='text-align:center; margin:8px 0 16px 0; color:#cbd5e1; "
+            f"font-weight:600;'>Step {step} of 4 — {_PROGRESS_LABELS[step - 1]}</div>",
+            unsafe_allow_html=True,
+        )
+        return
+    circles: list[str] = []
+    for i, label in enumerate(_PROGRESS_LABELS, start=1):
+        is_complete = i < step
+        is_current = i == step
+        if is_complete:
+            bg = "#2ecc71"
+            border = "#2ecc71"
+            txt = "✓"
+            label_color = "#2ecc71"
+            label_weight = "700"
+        elif is_current:
+            bg = "#3498db"
+            border = "#3498db"
+            txt = str(i)
+            label_color = "#e2e8f0"
+            label_weight = "700"
+        else:
+            bg = "transparent"
+            border = "#555"
+            txt = str(i)
+            label_color = "#94a3b8"
+            label_weight = "500"
+
+        circles.append(
+            (
+                "<div style='display:flex; flex-direction:column; align-items:center; "
+                "min-width:100px;'>"
+                f"<div style='width:34px; height:34px; border-radius:50%; "
+                f"border:2px solid {border}; background:{bg}; color:#fff; "
+                "display:flex; align-items:center; justify-content:center; "
+                "font-weight:700;'>"
+                f"{txt}</div>"
+                f"<div style='margin-top:8px; font-size:0.86rem; color:{label_color}; "
+                f"font-weight:{label_weight}; text-align:center;'>{label}</div>"
+                "</div>"
+            )
+        )
+
+    connectors: list[str] = []
+    for i in range(1, 4):
+        clr = "#2ecc71" if step > (i + 1) else "#555"
+        connectors.append(
+            f"<div style='width:80px; height:2px; background:{clr}; margin:0 6px 26px 6px;'></div>"
+        )
+
+    html = (
+        "<div style='display:flex; align-items:center; justify-content:center; "
+        "padding:16px 0; margin-bottom:20px;'>"
+        f"{circles[0]}{connectors[0]}{circles[1]}{connectors[1]}{circles[2]}{connectors[2]}{circles[3]}"
+        "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def _load_test_metrics(disease: str) -> dict | None:
@@ -121,6 +211,43 @@ def _load_test_metrics(disease: str) -> dict | None:
 
 def _disease_display_name(disease: str) -> str:
     return "Heart Disease" if disease == DISEASE_HEART else "Diabetes"
+
+
+def _threshold_mode(threshold: float) -> tuple[str, str]:
+    t = float(threshold)
+    if t < 0.35:
+        return (
+            "High Sensitivity Mode",
+            "🔴 High Sensitivity Mode\n"
+            "The model flags more people as at-risk.\n"
+            "Good for: screening where missing a case is costly.\n"
+            "Tradeoff: more false alarms.",
+        )
+    if t > 0.65:
+        return (
+            "High Specificity Mode",
+            "🔵 High Specificity Mode\n"
+            "The model only flags clear high-risk cases.\n"
+            "Good for: reducing unnecessary follow-ups.\n"
+            "Tradeoff: may miss borderline cases.",
+        )
+    return (
+        "Balanced Mode",
+        "🟡 Balanced Mode\n"
+        "Standard clinical threshold.\n"
+        "Good for: general population screening.",
+    )
+
+
+def _metric_color(metric: str, value: float) -> str:
+    cuts = {
+        "Accuracy": 0.75,
+        "Precision": 0.70,
+        "Recall (Sensitivity)": 0.70,
+        "Specificity": 0.70,
+        "F1 Score": 0.70,
+    }
+    return "#2ecc71" if value >= cuts.get(metric, 0.7) else "#e74c3c"
 
 
 def _render_model_performance_tab(disease: str) -> None:
@@ -161,14 +288,15 @@ def _render_model_performance_tab(disease: str) -> None:
     dataset_label = str(m.get("dataset", ""))
 
     st.markdown("#### Headline metrics (held-out test set)")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
+    metric_cols = st.columns(2)
+    with metric_cols[0]:
         st.metric("Accuracy", f"{acc * 100:.1f}%")
-    with c2:
+    with metric_cols[1]:
         st.metric("ROC-AUC", f"{roc_auc:.3f}")
-    with c3:
+    metric_cols2 = st.columns(2)
+    with metric_cols2[0]:
         st.metric("Precision", f"{prec * 100:.1f}%")
-    with c4:
+    with metric_cols2[1]:
         st.metric("Recall", f"{rec * 100:.1f}%")
 
     st.markdown("#### ROC curve")
@@ -264,6 +392,117 @@ def _render_model_performance_tab(disease: str) -> None:
     fig_cm.update_xaxes(title_standoff=8)
     fig_cm.update_yaxes(title_standoff=8)
     st.plotly_chart(fig_cm, use_container_width=True, theme=None, key=f"cm_heatmap_{_pk}")
+
+    st.markdown("### ⚖️ Classification Threshold Tuner")
+    threshold = st.slider(
+        "Decision Threshold",
+        min_value=0.10,
+        max_value=0.90,
+        value=float(st.session_state.get("custom_threshold", 0.50)),
+        step=0.01,
+        key=f"threshold_slider_{_pk}",
+        help=(
+            "Adjusting this threshold changes the tradeoff between catching more "
+            "cases (sensitivity) vs. avoiding false alarms (specificity)."
+        ),
+    )
+    st.session_state["custom_threshold"] = float(threshold)
+
+    probs_path = _TEST_PROBS_PATHS[disease]
+    labels_path = _TEST_LABELS_PATHS[disease]
+    if probs_path.exists() and labels_path.exists():
+        y_pred_proba = np.load(probs_path)
+        y_true = np.load(labels_path).astype(int)
+        y_pred_thr = (y_pred_proba >= threshold).astype(int)
+
+        acc_t = float(accuracy_score(y_true, y_pred_thr))
+        prec_t = float(precision_score(y_true, y_pred_thr, zero_division=0))
+        rec_t = float(recall_score(y_true, y_pred_thr, zero_division=0))
+        f1_t = float(f1_score(y_true, y_pred_thr, zero_division=0))
+        cm_t = confusion_matrix(y_true, y_pred_thr, labels=[0, 1])
+        tn, fp = int(cm_t[0, 0]), int(cm_t[0, 1])
+        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+
+        c_left, c_mid, c_right = st.columns(3)
+
+        with c_left:
+            m_names = [
+                "Accuracy",
+                "Precision",
+                "Recall (Sensitivity)",
+                "Specificity",
+                "F1 Score",
+            ]
+            m_vals = [acc_t, prec_t, rec_t, specificity, f1_t]
+            m_txt = [f"{v:.3f}" for v in m_vals]
+            val_colors = [_metric_color(n, v) for n, v in zip(m_names, m_vals)]
+            fig_tbl = go.Figure(
+                data=[
+                    go.Table(
+                        header=dict(values=["Metric", "Value"], fill_color="#1f2937", font=dict(color="white")),
+                        cells=dict(
+                            values=[m_names, m_txt],
+                            fill_color="#111827",
+                            font=dict(color=["#e5e7eb", val_colors]),
+                        ),
+                    )
+                ]
+            )
+            fig_tbl.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_tbl, use_container_width=True, theme=None, key=f"thr_metrics_{_pk}")
+
+        with c_mid:
+            thr_grid = np.round(np.arange(0.10, 0.901, 0.01), 2)
+            p_curve = []
+            r_curve = []
+            for t in thr_grid:
+                yp = (y_pred_proba >= t).astype(int)
+                p_curve.append(float(precision_score(y_true, yp, zero_division=0)))
+                r_curve.append(float(recall_score(y_true, yp, zero_division=0)))
+            fig_pr = go.Figure()
+            fig_pr.add_trace(go.Scatter(x=thr_grid, y=p_curve, mode="lines", name="Precision", line=dict(color="#3498db")))
+            fig_pr.add_trace(go.Scatter(x=thr_grid, y=r_curve, mode="lines", name="Recall", line=dict(color="#f39c12")))
+            fig_pr.add_shape(
+                type="line",
+                x0=threshold,
+                x1=threshold,
+                y0=0,
+                y1=1,
+                line=dict(color="#cbd5e1", width=2, dash="dash"),
+            )
+            fig_pr.update_layout(
+                title="Precision vs. Recall Tradeoff",
+                xaxis_title="Threshold (0.1 to 0.9)",
+                yaxis_title="Score",
+                yaxis=dict(range=[0, 1]),
+                height=320,
+                margin=dict(l=20, r=20, t=40, b=30),
+            )
+            st.plotly_chart(_style_plotly(fig_pr), use_container_width=True, theme=None, key=f"thr_tradeoff_{_pk}")
+
+        with c_right:
+            mode_name, mode_text = _threshold_mode(threshold)
+            st.markdown(
+                f"""
+<div style='background:#1a2a3a; padding:14px; border-radius:10px; border-left:4px solid #3498db; min-height:290px;'>
+  <div style='font-weight:700; margin-bottom:8px;'>{mode_name}</div>
+  <div style='white-space:pre-line; color:#dbeafe;'>{mode_text}</div>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption(
+            "Threshold tuner data files are missing. Re-run `python model/train.py` and "
+            "`python model/train_heart.py` to generate `*_test_probs.npy` and `*_test_labels.npy`."
+        )
+
+    st.info(
+        "💡 The default threshold of 0.5 is not always optimal.\n"
+        "In medical screening, doctors often lower the threshold to catch more\n"
+        "cases, accepting more false positives to avoid missing true ones.\n"
+        "This tradeoff is called the Sensitivity-Specificity tradeoff."
+    )
 
     with st.expander("📋 Dataset & Training Details", expanded=False):
         st.markdown(
@@ -460,6 +699,106 @@ def _clear_disease_switch_state() -> None:
         st.session_state.pop(f"sim_{f}", None)
 
 
+def _render_landing_screen() -> None:
+    st.markdown(
+        """
+<div style="text-align:center; padding-top: 1rem;">
+  <h1 style="margin-bottom: 0.35rem;">🏥 Personal Health Risk Explorer</h1>
+  <p style="font-size:1.05rem; color:#cbd5e1; max-width:900px; margin:0 auto;">
+    Assess your risk for diabetes and heart disease using AI-powered analysis.
+    Get personalized insights, explainable predictions, and a downloadable health report.
+  </p>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("### How It Works")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            """
+<div style='background:#1e2a3a; border-radius:12px; padding:24px;
+text-align:center; border:1px solid #2e4a6a;'>
+  <div style='font-size:2rem;'>📋</div>
+  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>① Enter Data</div>
+  <div style='margin-top:0.45rem; color:#cbd5e1;'>Input your health metrics using sliders or upload a CSV file</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            """
+<div style='background:#1e2a3a; border-radius:12px; padding:24px;
+text-align:center; border:1px solid #2e4a6a;'>
+  <div style='font-size:2rem;'>🔬</div>
+  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>② Analyze Risk</div>
+  <div style='margin-top:0.45rem; color:#cbd5e1;'>Our XGBoost model calculates your risk score with SHAP explainability</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            """
+<div style='background:#1e2a3a; border-radius:12px; padding:24px;
+text-align:center; border:1px solid #2e4a6a;'>
+  <div style='font-size:2rem;'>💡</div>
+  <div style='font-size:1.1rem; font-weight:700; margin-top:0.4rem;'>③ Understand & Act</div>
+  <div style='margin-top:0.45rem; color:#cbd5e1;'>Get an AI-written plain-English explanation and download your report</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+<style>
+div.stButton > button {
+  width: 100%;
+  height: 60px;
+  font-size: 1.1em;
+  font-weight: bold;
+  border-radius: 10px;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.session_state.get("is_mobile"):
+        b1 = st.container()
+        b2 = st.container()
+    else:
+        b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🎯 Try with Sample Data", key="landing_try_sample"):
+            sample_row: dict[str, float] = {}
+            if _SAMPLE_CSV_PATH.exists():
+                try:
+                    sdf = pd.read_csv(_SAMPLE_CSV_PATH)
+                    if len(sdf) > 0:
+                        sample_row = sdf.iloc[0].to_dict()
+                except Exception:  # pragma: no cover
+                    sample_row = {}
+            st.session_state["landing_sample_row"] = sample_row
+            st.session_state["input_mode"] = "sample"
+            st.session_state["input_mode_ui"] = "Try a Sample"
+            st.session_state["app_stage"] = "input"
+            st.rerun()
+    with b2:
+        if st.button("📂 Upload My Own CSV", key="landing_upload_csv"):
+            st.session_state["input_mode"] = "upload"
+            st.session_state["input_mode_ui"] = "Upload Your Data"
+            st.session_state["app_stage"] = "input"
+            st.rerun()
+
+    st.caption(
+        "⚠️ This tool is for educational purposes only.\n"
+        "Not a substitute for professional medical advice."
+    )
+
+
 BADGE_STYLES = {
     "Low": {
         "text": "Low Risk",
@@ -538,6 +877,24 @@ def _inject_product_css() -> None:
     opacity: 0.85;
     -webkit-text-fill-color: #94a3b8;
   }
+  @media (max-width: 768px) {
+    section[data-testid="stSidebar"] {
+      width: 0px !important;
+      min-width: 0px !important;
+    }
+    .main .block-container {
+      padding-left: 1rem;
+      padding-right: 1rem;
+      max-width: 100%;
+    }
+    h1 { font-size: 1.5rem !important; }
+    h2 { font-size: 1.2rem !important; }
+    .stButton > button { font-size: 0.9em !important; }
+    .stSlider { padding: 0 !important; }
+    [data-testid="stChatMessageContainer"] {
+      padding-bottom: 120px !important;
+    }
+  }
 </style>
         """,
         unsafe_allow_html=True,
@@ -555,51 +912,48 @@ def _clinical_badge_markdown(feature: str, value, disease: str) -> str:
     )
 
 
+def _glossary_for_disease(disease: str) -> dict[str, dict]:
+    return HEART_GLOSSARY if disease == DISEASE_HEART else DIABETES_GLOSSARY
+
+
+def _render_feature_info_panel(feature: str, disease: str) -> None:
+    entry = _glossary_for_disease(disease).get(feature)
+    if not entry:
+        return
+    st.markdown(
+        f"""
+<div style='background:#1a2a3a; padding:12px; border-radius:8px;
+border-left:3px solid #3498db;'>
+<b>{entry['label']}</b><br>
+{entry['plain']}<br><br>
+<span style='color:#aaa'>📏 Normal range: {entry['normal_range']}</span><br>
+<i style='color:#7fb3d3'>💡 {entry['why_it_matters']}</i>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_info_button(feature: str, disease: str, key_suffix: str) -> None:
+    tkey = f"glossary_open_{disease}_{feature}_{key_suffix}"
+    if st.button("ℹ️", key=f"btn_{tkey}", help="Feature explanation"):
+        st.session_state[tkey] = not bool(st.session_state.get(tkey, False))
+    if st.session_state.get(tkey, False):
+        with st.expander("Feature details", expanded=True):
+            _render_feature_info_panel(feature, disease)
+
+
 def _coerce_feature_value(key: str, raw: float) -> float:
     spec = SLIDER_CONFIG[key]
     return float(int(round(raw))) if spec["int"] else float(raw)
 
 
-def _risk_gauge_compact(pct_0_100: float, title_html: str) -> go.Figure:
-    v = float(min(100, max(0, pct_0_100)))
-    needle = v
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=v,
-            number={"suffix": "%", "font": {"size": 28, "color": "#f4f4f5"}},
-            title={"text": title_html, "font": {"size": 14, "color": "#94a3b8"}},
-            gauge={
-                "axis": {
-                    "range": [0, 100],
-                    "tickwidth": 1,
-                    "tickcolor": "#475569",
-                    "tickfont": {"size": 10, "color": "#94a3b8"},
-                },
-                "bar": {"color": "rgba(45, 212, 191, 0.35)", "thickness": 0.2},
-                "bgcolor": "#11151c",
-                "borderwidth": 1,
-                "bordercolor": "rgba(148, 163, 184, 0.35)",
-                "steps": [
-                    {"range": [0, 30], "color": "rgba(34, 197, 94, 0.45)"},
-                    {"range": [30, 60], "color": "rgba(234, 179, 8, 0.42)"},
-                    {"range": [60, 100], "color": "rgba(239, 68, 68, 0.42)"},
-                ],
-                "threshold": {
-                    "line": {"color": "#f8fafc", "width": 2},
-                    "thickness": 0.82,
-                    "value": needle,
-                },
-            },
-        )
-    )
-    fig.update_layout(
-        height=240,
-        margin=dict(t=56, b=12, l=28, r=28),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e8eaef"),
-    )
-    return fig
+def _risk_label_from_score(score_0_1: float) -> str:
+    if score_0_1 > 0.6:
+        return "High"
+    if score_0_1 > 0.3:
+        return "Moderate"
+    return "Low"
 
 
 def _population_percentile_figure(
@@ -667,59 +1021,76 @@ def _population_percentile_figure(
     return fig
 
 
-def _risk_gauge_figure(pct_0_100: float, disease: str) -> go.Figure:
-    v = float(min(100, max(0, pct_0_100)))
-    needle = v
-    if disease == DISEASE_HEART:
-        title_html = (
-            "<b>Heart disease risk score</b><br>"
-            "<span style='font-size:0.75em;color:#94a3b8;font-weight:400'>"
-            "Model probability × 100</span>"
-        )
-    else:
-        title_html = (
-            "<b>Diabetes risk score</b><br>"
-            "<span style='font-size:0.75em;color:#94a3b8;font-weight:400'>"
-            "Model probability × 100</span>"
-        )
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=v,
-            number={"suffix": "%", "font": {"size": 44, "color": "#f4f4f5"}},
-            title={
-                "text": title_html,
-                "font": {"size": 18, "color": "#e8eaef"},
-            },
-            gauge={
-                "axis": {
-                    "range": [0, 100],
-                    "tickwidth": 1,
-                    "tickcolor": "#475569",
-                    "tickfont": {"color": "#94a3b8"},
-                },
-                "bar": {"color": "rgba(45, 212, 191, 0.35)", "thickness": 0.22},
-                "bgcolor": "#11151c",
-                "borderwidth": 1,
-                "bordercolor": "rgba(148, 163, 184, 0.35)",
-                "steps": [
-                    {"range": [0, 30], "color": "rgba(34, 197, 94, 0.45)"},
-                    {"range": [30, 60], "color": "rgba(234, 179, 8, 0.42)"},
-                    {"range": [60, 100], "color": "rgba(239, 68, 68, 0.42)"},
-                ],
-                "threshold": {
-                    "line": {"color": "#f8fafc", "width": 3},
-                    "thickness": 0.85,
-                    "value": needle,
-                },
-            },
-        )
+def build_animated_gauge(
+    final_score: float, risk_label: str, title: str = "Risk Score", height: int = 300
+) -> go.Figure:
+    final_score = float(min(1.0, max(0.0, final_score)))
+    bar_color = (
+        "#e74c3c"
+        if risk_label == "High"
+        else "#f39c12"
+        if risk_label == "Moderate"
+        else "#2ecc71"
     )
-    fig.update_layout(
-        height=340,
-        margin=dict(t=100, b=24, l=36, r=36),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e8eaef"),
+    frames: list[go.Frame] = []
+    steps = 30
+    for i in range(steps + 1):
+        current = (final_score * i) / steps
+        frames.append(
+            go.Frame(
+                data=[
+                    go.Indicator(
+                        mode="gauge+number",
+                        value=current * 100.0,
+                        number={"suffix": "%", "font": {"size": 36}},
+                        gauge={
+                            "axis": {"range": [0, 100]},
+                            "bar": {"color": bar_color},
+                            "steps": [
+                                {"range": [0, 30], "color": "#1a3a1a"},
+                                {"range": [30, 60], "color": "#3a2a00"},
+                                {"range": [60, 100], "color": "#3a0000"},
+                            ],
+                            "threshold": {
+                                "line": {"color": "white", "width": 3},
+                                "thickness": 0.75,
+                                "value": final_score * 100.0,
+                            },
+                        },
+                    )
+                ],
+                name=str(i),
+            )
+        )
+
+    fig = go.Figure(
+        data=frames[0].data,
+        frames=frames,
+        layout=go.Layout(
+            title={"text": title, "x": 0.5},
+            height=height,
+            updatemenus=[
+                {
+                    "type": "buttons",
+                    "showactive": False,
+                    "buttons": [
+                        {
+                            "label": "Play",
+                            "method": "animate",
+                            "args": [
+                                None,
+                                {
+                                    "frame": {"duration": 30, "redraw": True},
+                                    "fromcurrent": True,
+                                    "transition": {"duration": 0},
+                                },
+                            ],
+                        }
+                    ],
+                    "visible": False,
+                }
+            ],
+        ),
     )
     return fig
 
@@ -818,19 +1189,24 @@ def _render_risk_trajectory_simulator(row_df: pd.DataFrame, disease: str) -> Non
 
     _sk = "h" if disease == DISEASE_HEART else "d"
     g_left, g_right = st.columns(2)
+    sim_gauge_h = 250 if st.session_state.get("is_mobile") else 240
     with g_left:
+        curr_label = _risk_label_from_score(orig_score)
         st.plotly_chart(
-            _risk_gauge_compact(o_pct, "<b>Current Risk</b>"),
+            build_animated_gauge(orig_score, curr_label, "Current Risk", height=sim_gauge_h),
             use_container_width=True,
             theme=None,
             key=f"sim_gauge_current_{_sk}",
+            config={"displayModeBar": False},
         )
     with g_right:
+        sim_label = _risk_label_from_score(sim_score)
         st.plotly_chart(
-            _risk_gauge_compact(s_pct, "<b>Simulated Risk</b>"),
+            build_animated_gauge(sim_score, sim_label, "Simulated Risk", height=sim_gauge_h),
             use_container_width=True,
             theme=None,
             key=f"sim_gauge_simulated_{_sk}",
+            config={"displayModeBar": False},
         )
 
     delta_pp = s_pct - o_pct
@@ -867,11 +1243,13 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
 
         i = 0
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["age"] = float(
                     st.slider("Age (years)", 20, 80, 45, key="heart_sample_age")
                 )
+            with row_i:
+                _render_info_button("age", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -880,7 +1258,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 sex_ix = st.selectbox(
                     "Sex",
@@ -890,6 +1268,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                     key="heart_sample_sex",
                 )
                 values["sex"] = float(sex_ix)
+            with row_i:
+                _render_info_button("sex", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -898,7 +1278,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["cp"] = float(
                     st.slider(
@@ -910,6 +1290,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_cp",
                     )
                 )
+            with row_i:
+                _render_info_button("cp", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -918,7 +1300,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["trestbps"] = float(
                     st.slider(
@@ -929,6 +1311,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_trestbps",
                     )
                 )
+            with row_i:
+                _render_info_button("trestbps", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -937,7 +1321,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["chol"] = float(
                     st.slider(
@@ -948,6 +1332,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_chol",
                     )
                 )
+            with row_i:
+                _render_info_button("chol", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -956,7 +1342,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 fbs_ix = st.selectbox(
                     "Fasting blood sugar > 120 mg/dL (fbs)",
@@ -965,6 +1351,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                     key="heart_sample_fbs",
                 )
                 values["fbs"] = float(fbs_ix)
+            with row_i:
+                _render_info_button("fbs", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -973,11 +1361,13 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["restecg"] = float(
                     st.slider("Resting ECG (restecg)", 0, 2, 0, key="heart_sample_restecg")
                 )
+            with row_i:
+                _render_info_button("restecg", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -986,7 +1376,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["thalach"] = float(
                     st.slider(
@@ -997,6 +1387,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_thalach",
                     )
                 )
+            with row_i:
+                _render_info_button("thalach", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1005,7 +1397,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 ex_ix = st.selectbox(
                     "Exercise induced angina (exang)",
@@ -1014,6 +1406,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                     key="heart_sample_exang",
                 )
                 values["exang"] = float(ex_ix)
+            with row_i:
+                _render_info_button("exang", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1022,7 +1416,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["oldpeak"] = float(
                     st.slider(
@@ -1034,6 +1428,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_oldpeak",
                     )
                 )
+            with row_i:
+                _render_info_button("oldpeak", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1042,11 +1438,13 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["slope"] = float(
                     st.slider("Slope of ST segment (slope)", 0, 2, 1, key="heart_sample_slope")
                 )
+            with row_i:
+                _render_info_button("slope", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1055,7 +1453,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["ca"] = float(
                     st.slider(
@@ -1066,6 +1464,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_ca",
                     )
                 )
+            with row_i:
+                _render_info_button("ca", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1074,7 +1474,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                 )
         i += 1
         with _pair(i):
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([3, 0.5, 1])
             with row_l:
                 values["thal"] = float(
                     st.slider(
@@ -1086,6 +1486,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                         key="heart_sample_thal",
                     )
                 )
+            with row_i:
+                _render_info_button("thal", disease, "sample")
             with row_r:
                 st.markdown(
                     f"<div style='padding-top:1.15rem; text-align:right'>"
@@ -1107,7 +1509,7 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
         spec = SLIDER_CONFIG[key]
         col = c1 if i % 2 == 0 else c2
         with col:
-            row_l, row_r = st.columns([3, 1])
+            row_l, row_i, row_r = st.columns([4, 0.5, 1])
             with row_l:
                 v = st.slider(
                     spec["label"],
@@ -1117,6 +1519,8 @@ def _render_inputs_sample(disease: str) -> pd.DataFrame | None:
                     step=float(spec["step"]),
                     key=f"sample_{key}",
                 )
+            with row_i:
+                _render_info_button(key, disease, "sample")
             with row_r:
                 cv = _coerce_feature_value(key, v)
                 st.markdown(
@@ -1253,17 +1657,24 @@ def _render_shared_output(row: pd.DataFrame, disease: str) -> None:
     score = float(out["risk_score"])
     label_key = out["risk_label"]
     pct = score * 100.0
+    custom_threshold = float(st.session_state.get("custom_threshold", 0.50))
+    at_risk_flag = bool(score >= custom_threshold)
+    mode_name, _ = _threshold_mode(custom_threshold)
     feat_order = HEART_FEATURE_COLS if disease == DISEASE_HEART else FEATURE_COLS
+    st.session_state["progress_step"] = max(int(st.session_state.get("progress_step", 1)), 2)
 
     st.markdown("### Results")
 
     g1, g2 = st.columns([1.25, 1])
     with g1:
+        gauge_title = "Heart Disease Risk Score" if disease == DISEASE_HEART else "Diabetes Risk Score"
+        main_gauge_h = 250 if st.session_state.get("is_mobile") else 300
         st.plotly_chart(
-            _risk_gauge_figure(pct, disease),
+            build_animated_gauge(score, label_key, gauge_title, height=main_gauge_h),
             use_container_width=True,
             theme=None,
             key=f"gauge_chart_{_pk}",
+            config={"displayModeBar": False},
         )
     with g2:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1282,6 +1693,10 @@ background: {b["bg"]}; margin-top: 0.5rem;">
 </div>
             """,
             unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Using custom threshold: {custom_threshold:.2f} ({mode_name}) · "
+            f"Screening decision: {'At risk' if at_risk_flag else 'Not flagged'}"
         )
 
     input_d = {c: float(row[c].iloc[0]) for c in feat_order}
@@ -1385,6 +1800,7 @@ background: {b["bg"]}; margin-top: 0.5rem;">
 
     _llm_text = st.session_state.get("llm_explanation")
     if _llm_text:
+        st.session_state["progress_step"] = max(int(st.session_state.get("progress_step", 1)), 3)
         st.info("🤖 **Your Personalized Health Insight**\n\n" + str(_llm_text))
         st.caption(
             "⚠️ This explanation is AI-generated and for informational purposes only. "
@@ -1433,13 +1849,15 @@ background: {b["bg"]}; margin-top: 0.5rem;">
     except Exception as e:  # pragma: no cover
         st.caption(f"Could not prepare PDF: {e}")
     else:
-        st.download_button(
+        clicked_pdf = st.download_button(
             "📄 Download Health Report (PDF)",
             data=pdf_buf.getvalue(),
             file_name="health_risk_report.pdf",
             mime="application/pdf",
             key=f"download_health_pdf_{_pk}",
         )
+        if clicked_pdf:
+            st.session_state["progress_step"] = 4
 
 
 def main() -> None:
@@ -1449,19 +1867,32 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    diabetes_model = _APP_ROOT / "model" / "diabetes_model.pkl"
-    heart_model = _APP_ROOT / "model" / "heart_model.pkl"
-    if (not diabetes_model.exists()) or (not heart_model.exists()):
-        with st.spinner("🔄 First-time setup: training models, please wait ~60 seconds..."):
-            setup_models()
-
     _inject_product_css()
 
+    mobile_q = st.query_params.get("mobile", "false")
+    if isinstance(mobile_q, list):
+        mobile_q = mobile_q[0] if mobile_q else "false"
+    st.session_state["is_mobile"] = str(mobile_q).lower() in ("1", "true", "yes")
+
+    if "app_stage" not in st.session_state:
+        st.session_state["app_stage"] = "landing"
     if "disease_model" not in st.session_state:
         st.session_state["disease_model"] = DISEASE_DIABETES
     st.session_state.setdefault("chat_history", [])
+    st.session_state.setdefault("custom_threshold", 0.50)
+
+    if st.session_state["app_stage"] == "landing":
+        _render_landing_screen()
+        return
+
+    st.session_state.setdefault("progress_step", 1)
 
     with st.sidebar:
+        if st.button("← Back to Home", key="btn_back_home"):
+            st.session_state.clear()
+            st.session_state["app_stage"] = "landing"
+            st.rerun()
+        st.markdown("---")
         st.radio(
             "🫀 Select Disease Model",
             [DISEASE_DIABETES, DISEASE_HEART],
@@ -1476,13 +1907,17 @@ def main() -> None:
 
         st.markdown("---")
         st.markdown("### Mode")
+        mode_default_idx = (
+            1 if st.session_state.get("input_mode") == "upload" else 0
+        )
         mode = st.radio(
             "How would you like to provide inputs?",
             ["Try a Sample", "Upload Your Data"],
-            index=0,
+            index=mode_default_idx,
             label_visibility="collapsed",
-            key="input_mode",
+            key="input_mode_ui",
         )
+        st.session_state["input_mode"] = "sample" if mode == "Try a Sample" else "upload"
         st.markdown("---")
         st.markdown("##### About")
         if disease == DISEASE_HEART:
@@ -1497,6 +1932,11 @@ def main() -> None:
                 "- **Score:** predicted probability of diabetes (class 1), shown as %.\n"
                 "- **Explainability:** SHAP waterfall shows how each value shifts risk from the cohort baseline."
             )
+        with st.expander("📖 Feature Guide", expanded=False):
+            gdict = _glossary_for_disease(disease)
+            for feat, entry in gdict.items():
+                st.markdown(f"**{entry['label']}** (`{feat}`)")
+                st.caption(entry["plain"])
 
     if disease == DISEASE_HEART:
         header_emoji = "🫀"
@@ -1527,6 +1967,7 @@ def main() -> None:
     )
 
     st.markdown("---")
+    _render_progress_stepper(int(st.session_state.get("progress_step", 1)))
 
     tab_risk, tab_perf = st.tabs(["🔍 Risk Analysis", "📈 Model Performance"])
 
