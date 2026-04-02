@@ -3,10 +3,21 @@
 > AI-powered diabetes and heart disease risk assessment with explainable ML and conversational health insights.
 
 ![CI](https://github.com/Axinion/Health-Risk-Explorer/actions/workflows/test.yml/badge.svg)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-ff4b4b?logo=streamlit&logoColor=white)](https://health-risk-explorer-s.streamlit.app/)
+
+**Live App:** [health-risk-explorer-s.streamlit.app](https://health-risk-explorer-s.streamlit.app/)
 
 <!-- INSERT DEMO GIF HERE -->
 
-This application delivers an interactive, clinician-style risk workflow for two classic tabular benchmarks—PIMA-style diabetes and UCI-style heart disease—so analysts, students, and health-tech reviewers can explore **transparent predictions** in one place. It pairs **gradient-boosted probabilities** with **SHAP** attributions, **population context**, and **Groq-powered** narrative and follow-up chat, all behind a **Streamlit** interface with exportable reporting. The stack combines **Python**, **XGBoost**, **SHAP**, **Plotly**, **Groq (Llama 3.1)**, and **ReportLab** into a cohesive demo suitable for portfolios and classroom use.
+Personal Health Risk Explorer is a production-style ML demo that turns two clinical risk models (diabetes and heart disease) into a complete, explainable decision-support workflow. Instead of showing a raw probability only, it combines calibrated model output, SHAP-based feature attribution, population percentile context, threshold tuning, and conversational AI follow-up in one polished interface. The result is an end-to-end application that demonstrates model training, explainability, product thinking, and deployment readiness using Python, XGBoost, SHAP, Plotly, Groq, and Streamlit.
+
+## 🚀 Why This Project Stands Out
+
+- **Dual-model architecture:** One app, two healthcare risk domains, shared UX patterns, and disease-specific logic.
+- **Trust-first ML UX:** Every prediction is paired with SHAP drivers, confusion matrix/ROC metrics, and plain-English interpretation.
+- **Interactive decision policy:** Threshold tuning shows sensitivity vs specificity tradeoffs in real time.
+- **Real product surface:** Landing flow, mobile responsiveness, chat follow-ups, and downloadable PDF report.
+- **Deployment-ready engineering:** Streamlit Cloud deployment, CI smoke tests, Docker + Render support, and reproducible dependencies.
 
 ## ✨ Features
 
@@ -19,6 +30,14 @@ This application delivers an interactive, clinician-style risk workflow for two 
 - 👥 **Population Percentile Comparison**
 - 🏷️ **Clinical Health Badges** per metric
 - 📄 **Downloadable PDF Health Report**
+
+## 🎬 30-Second Demo Flow
+
+1. Open the live app and choose **Diabetes** or **Heart Disease**.
+2. Enter sample values (or upload CSV) and generate a risk score.
+3. Show the top SHAP factors that explain *why* the score moved.
+4. Switch to **Model Performance** and adjust the threshold slider.
+5. Ask a follow-up question in chat and export the PDF report.
 
 ## 🛠️ Tech Stack
 
@@ -127,8 +146,8 @@ docker-compose up --build
 7. Your app is live at https://your-app-name.onrender.com
 
 Note: Free tier spins down after inactivity.
-First load after inactivity takes ~60 seconds (model retraining).
-Upgrade to paid tier ($7/mo) for always-on.
+First load after inactivity may take ~30-60 seconds while the container wakes up.
+Upgrade to paid tier for always-on availability.
 
 ## 📁 Project Structure
 
