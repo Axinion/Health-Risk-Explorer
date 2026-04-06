@@ -30,13 +30,6 @@ Personal Health Risk Explorer is a production-style ML demo that turns two clini
 - 🏷️ **Clinical Health Badges** per metric
 - 📄 **Downloadable PDF Health Report**
 
-## 🎬 30-Second Demo Flow
-
-1. Open the live app and choose **Diabetes** or **Heart Disease**.
-2. Enter sample values (or upload CSV) and generate a risk score.
-3. Show the top SHAP factors that explain *why* the score moved.
-4. Switch to **Model Performance** and adjust the threshold slider.
-5. Ask a follow-up question in chat and export the PDF report.
 
 ## 🛠️ Tech Stack
 
